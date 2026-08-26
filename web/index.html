@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>GPU Memory Calculator</title>
+<link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #0f1115;
+    --panel: #171a21;
+    --panel-2: #1e222b;
+    --border: #2a2f3a;
+    --text: #e6e8ec;
+    --muted: #9aa3b2;
+    --accent: #5b8cff;
+    --ok: #35c07a;
+    --bad: #ef5a5a;
+    --warn: #e0a63b;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f6f8;
+      --panel: #ffffff;
+      --panel-2: #f0f1f4;
+      --border: #dfe2e8;
+      --text: #1a1d24;
+      --muted: #5b6472;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); }
+  header { padding: 20px 24px; border-bottom: 1px solid var(--border); }
+  header h1 { margin: 0; font-size: 20px; }
+  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
+  main { display: grid; grid-template-columns: 380px 1fr; gap: 20px; padding: 20px 24px; align-items: start; }
+  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
+  .panel + .panel { margin-top: 16px; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+  .tab { flex: 1; padding: 8px 10px; text-align: center; border-radius: 8px; border: 1px solid var(--border); cursor: pointer; background: var(--panel-2); font-size: 13px; }
+  .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+  fieldset { border: 1px solid var(--border); border-radius: 8px; margin: 0 0 12px; padding: 10px 12px; }
+  legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
+  label { display: block; font-size: 12px; color: var(--muted); margin-top: 8px; }
+  label:first-child { margin-top: 0; }
+  select, input[type=number], input[type=text] {
+    width: 100%; padding: 6px 8px; margin-top: 3px; background: var(--panel-2); color: var(--text);
+    border: 1px solid var(--border); border-radius: 6px; font-size: 13px;
+  }
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .check { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
+  .check input { width: auto; }
+  .check label { margin: 0; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 500; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+  tr.total td { font-weight: 600; border-top: 2px solid var(--border); border-bottom: none; }
+  .bar-track { display: flex; height: 26px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); margin: 12px 0; }
+  .bar-seg { height: 100%; }
+  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+  .legend span.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+  .verdict { padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; }
+  .verdict.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); border: 1px solid var(--ok); }
+  .verdict.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); border: 1px solid var(--bad); }
+  .warnings { font-size: 12px; color: var(--warn); }
+  .warnings div { margin-top: 4px; }
+  .summary { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+  .summary b { color: var(--text); }
+</style>
+</head>
+<body>
+<header>
+  <h1>GPU Memory Calculator</h1>
+  <p>Inference / KV cache, fine-tuning (full · LoRA · QLoRA), and MoE — with TP / PP / DP / EP. Fine-tuning math follows LLMem (arXiv:2404.10933).</p>
+</header>
+<main>
+  <div>
+    <div class="panel">
+      <div class="tabs">
+        <div class="tab active" data-scenario="inference">Inference</div>
+        <div class="tab" data-scenario="finetune">Fine-tuning</div>
+      </div>
+
+      <fieldset>
+        <legend>Model</legend>
+        <label>Preset<select id="model-preset"></select></label>
+        <div id="moe-note" class="summary" style="display:none;"></div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Parallelism</legend>
+        <div class="row3">
+          <label>TP<input type="number" id="tp" min="1" value="1" /></label>
+          <label>PP<input type="number" id="pp" min="1" value="1" /></label>
+          <label>DP<input type="number" id="dp" min="1" value="1" /></label>
+        </div>
+        <label id="ep-label" style="display:none;">EP (expert-parallel)<input type="number" id="ep" min="1" value="1" /></label>
+      </fieldset>
+
+      <fieldset id="inference-fields">
+        <legend>Inference</legend>
+        <div class="row">
+          <label>Weight dtype
+            <select id="weight-dtype"></select>
+          </label>
+          <label>KV cache dtype
+            <select id="kv-dtype"></select>
+          </label>
+        </div>
+        <div class="row">
+          <label>Sequence length<input type="number" id="inf-seq" min="1" value="4096" /></label>
+          <label>Batch size<input type="number" id="inf-batch" min="1" value="1" /></label>
+        </div>
+        <label>Logits mode
+          <select id="logits-mode">
+            <option value="lastToken">Last token (decode)</option>
+            <option value="fullSequence">Full sequence (prefill scoring)</option>
+          </select>
+        </label>
+      </fieldset>
+
+      <fieldset id="finetune-fields" style="display:none;">
+        <legend>Fine-tuning</legend>
+        <div class="row">
+          <label>Method
+            <select id="ft-method">
+              <option value="full">Full fine-tuning</option>
+              <option value="lora">LoRA</option>
+              <option value="qlora">QLoRA</option>
+            </select>
+          </label>
+          <label>Fidelity
+            <select id="ft-fidelity">
+              <option value="simple">Simple (fast, analytic)</option>
+              <option value="granular">Granular (LLMem-faithful)</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <label>ZeRO stage
+            <select id="ft-zero">
+              <option value="0">0 (none)</option>
+              <option value="1">1 (optimizer)</option>
+              <option value="2">2 (+ gradients)</option>
+              <option value="3">3 (+ params, ADP)</option>
+            </select>
+          </label>
+          <label>Optimizer
+            <select id="ft-optimizer">
+              <option value="adamw">AdamW</option>
+              <option value="adamw8bit">AdamW 8-bit</option>
+              <option value="sgd">SGD (momentum)</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <label>Sequence length<input type="number" id="ft-seq" min="1" value="2048" /></label>
+          <label>Batch size<input type="number" id="ft-batch" min="1" value="1" /></label>
+        </div>
+        <div class="check"><input type="checkbox" id="ft-ckpt" /><label for="ft-ckpt">Gradient checkpointing</label></div>
+        <div class="check"><input type="checkbox" id="ft-mp" checked /><label for="ft-mp">Mixed precision</label></div>
+        <div id="lora-fields" style="display:none;">
+          <label>LoRA rank<input type="number" id="lora-rank" min="1" value="16" /></label>
+          <label>Target modules (comma-separated)<input type="text" id="lora-targets" value="q_proj,k_proj,v_proj,o_proj" /></label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>GPU</legend>
+        <label>Device<select id="gpu-select"></select></label>
+        <label>Usable fraction (gpu_memory_utilization)<input type="number" id="gpu-util" min="0.1" max="1" step="0.05" value="1" /></label>
+      </fieldset>
+    </div>
+  </div>
+
+  <div>
+    <div class="panel">
+      <div id="verdict" class="verdict"></div>
+      <div id="summary" class="summary"></div>
+      <div id="legend" class="legend"></div>
+      <div id="bar" class="bar-track"></div>
+      <table>
+        <thead>
+          <tr><th>Component</th><th class="num">Total</th><th class="num">Per-GPU (peak)</th></tr>
+        </thead>
+        <tbody id="table-body"></tbody>
+      </table>
+      <div id="warnings" class="warnings"></div>
+    </div>
+  </div>
+</main>
+<script type="module" src="./dist/app.js"></script>
+</body>
+</html>

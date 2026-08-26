@@ -1,0 +1,33 @@
+{
+  "name": "gpu-memory-calculator",
+  "version": "0.1.0",
+  "description": "GPU VRAM calculator for LLM inference, fine-tuning and MoE models, with tensor/pipeline/data/expert parallelism. Fine-tuning math follows LLMem (arXiv:2404.10933).",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "bin": {
+    "gpumem": "./dist/cli/main.js"
+  },
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:web": "node scripts/build-web.mjs",
+    "web": "node scripts/build-web.mjs --serve"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "esbuild": "^0.24.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}
