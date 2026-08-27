@@ -6,6 +6,8 @@ export { MODEL_CATALOG, findPreset } from './models/catalog.js';
 export type { ModelPreset } from './models/catalog.js';
 export { resolveModel, validateModelConfig } from './models/resolve.js';
 export type { ResolveModelOptions, ResolvedModel, ModelOverrides } from './models/resolve.js';
+export { parseHfConfig } from './models/hf.js';
+export type { HfParseResult } from './models/hf.js';
 export { GPU_CATALOG, findGpu } from './gpus/catalog.js';
 export {
   resolveParallelism,

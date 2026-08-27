@@ -5,193 +5,523 @@
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>GPU Memory Calculator</title>
 <link rel="icon" type="image/svg+xml" href="assets/favicon.svg" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Archivo:wdth,wght@62..125,400..800&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
 <style>
+  /* ---------------------------------------------------------------------
+     Tokens. Two signal colours carry strict meaning and nothing else uses
+     them: --signal marks the budget boundary and anything active/focused,
+     --redline marks an overrun. The allocation ramp is deliberately
+     desaturated so a full memory map never out-shouts those two.
+     --------------------------------------------------------------------- */
   :root {
-    color-scheme: light dark;
-    --bg: #0f1115;
-    --panel: #171a21;
-    --panel-2: #1e222b;
-    --border: #2a2f3a;
-    --text: #e6e8ec;
-    --muted: #9aa3b2;
-    --accent: #5b8cff;
-    --ok: #35c07a;
-    --bad: #ef5a5a;
-    --warn: #e0a63b;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Inter, Roboto, sans-serif;
+    color-scheme: dark light;
+
+    --ground:  #12161a;
+    --panel:   #171c22;
+    --inset:   #1d242b;
+    --rule:    #2b333c;
+    --rule-2:  #3a444f;
+    --text:    #e8eaec;
+    /* Referenced from app.ts as an inline style on component notes. */
+    --muted:   #8d99a5;
+
+    --signal:  #f0a92b;
+    --redline: #e5484d;
+    --ok:      #4cc38a;
+
+    /* Foreground for anything sitting *on* a signal or allocation colour. The
+       ramp is mid-tone in dark mode and darker in light mode, so this flips. */
+    --on-fill: #0d1114;
+
+    --over-hatch: rgba(229, 72, 77, 0.55);
+
+    /* Cool -> warm, following the order components come back in: the big
+       cold blocks (weights, KV cache) first, the warm slivers (overhead) last. */
+    --alloc-1: #5b8bbf;
+    --alloc-2: #4fa39b;
+    --alloc-3: #7f9f5e;
+    --alloc-4: #c2a24e;
+    --alloc-5: #c1794f;
+    --alloc-6: #9c6a94;
+    --alloc-7: #6b7784;
+
+    --display: 'Archivo', 'Helvetica Neue', Helvetica, Arial, sans-serif;
+    --mono: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+    font-family: var(--display);
   }
+
   @media (prefers-color-scheme: light) {
     :root {
-      --bg: #f5f6f8;
-      --panel: #ffffff;
-      --panel-2: #f0f1f4;
-      --border: #dfe2e8;
-      --text: #1a1d24;
-      --muted: #5b6472;
+      --ground:  #e9ecef;
+      --panel:   #ffffff;
+      --inset:   #f1f3f5;
+      --rule:    #d7dce1;
+      --rule-2:  #b9c1c9;
+      --text:    #161b20;
+      --muted:   #5d6873;
+
+      --signal:  #b97407;
+      --redline: #cc2f34;
+      --ok:      #1f8a5b;
+
+      --on-fill: #ffffff;
+
+      --over-hatch: rgba(204, 47, 52, 0.45);
+
+      --alloc-1: #4477ad;
+      --alloc-2: #3d8d86;
+      --alloc-3: #6b8b4a;
+      --alloc-4: #a8873a;
+      --alloc-5: #a9623b;
+      --alloc-6: #855579;
+      --alloc-7: #5c6873;
     }
   }
+
   * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); }
-  header { padding: 20px 24px; border-bottom: 1px solid var(--border); }
-  header h1 { margin: 0; font-size: 20px; }
-  header p { margin: 4px 0 0; color: var(--muted); font-size: 13px; }
-  main { display: grid; grid-template-columns: 380px 1fr; gap: 20px; padding: 20px 24px; align-items: start; }
-  @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-  .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px; }
-  .panel + .panel { margin-top: 16px; }
-  .tabs { display: flex; gap: 8px; margin-bottom: 14px; }
-  .tab { flex: 1; padding: 8px 10px; text-align: center; border-radius: 8px; border: 1px solid var(--border); cursor: pointer; background: var(--panel-2); font-size: 13px; }
-  .tab.active { background: var(--accent); border-color: var(--accent); color: #fff; }
-  fieldset { border: 1px solid var(--border); border-radius: 8px; margin: 0 0 12px; padding: 10px 12px; }
-  legend { font-size: 12px; color: var(--muted); padding: 0 6px; }
-  label { display: block; font-size: 12px; color: var(--muted); margin-top: 8px; }
-  label:first-child { margin-top: 0; }
-  select, input[type=number], input[type=text] {
-    width: 100%; padding: 6px 8px; margin-top: 3px; background: var(--panel-2); color: var(--text);
-    border: 1px solid var(--border); border-radius: 6px; font-size: 13px;
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--text);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
   }
-  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
-  .check { display: flex; align-items: center; gap: 6px; margin-top: 8px; }
-  .check input { width: auto; }
-  .check label { margin: 0; }
+
+  a { color: inherit; text-decoration-color: var(--rule-2); text-underline-offset: 3px; }
+  a:hover { text-decoration-color: var(--signal); }
+
+  :focus-visible { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 2px; }
+
+  /* --- Masthead ------------------------------------------------------- */
+
+  .masthead {
+    display: flex; align-items: baseline; justify-content: space-between;
+    flex-wrap: wrap; gap: 6px 20px;
+    padding: 18px 26px 16px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .wordmark {
+    margin: 0;
+    font-size: 17px; font-weight: 800; font-stretch: 125%;
+    letter-spacing: 0.13em; text-transform: uppercase;
+  }
+  .masthead-note { margin: 0; color: var(--muted); font-size: 13px; }
+  .masthead-cite { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+  /* --- Readout: the answer, and the memory map ------------------------ */
+
+  .readout {
+    position: sticky; top: 0; z-index: 5;
+    background: var(--ground);
+    border-bottom: 1px solid var(--rule);
+    padding: 18px 26px 20px;
+  }
+  .spec {
+    font-family: var(--mono); font-size: 12px; color: var(--muted);
+    margin-bottom: 10px;
+  }
+  .spec b { color: var(--text); font-weight: 600; }
+
+  .verdict-row {
+    display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px 32px;
+    margin-bottom: 16px;
+  }
+  .verdict-word {
+    margin: 0;
+    font-size: clamp(30px, 4.6vw, 46px); font-weight: 800; font-stretch: 125%;
+    letter-spacing: 0.005em; line-height: 0.95; text-transform: uppercase;
+  }
+  [data-state="fits"] .verdict-word { color: var(--ok); }
+  [data-state="over"] .verdict-word { color: var(--redline); }
+  [data-state="error"] .verdict-word { color: var(--redline); font-size: clamp(20px, 2.6vw, 28px); }
+
+  .figures { display: flex; flex-wrap: wrap; gap: 8px 30px; margin: 0; }
+  .figures > div { display: flex; flex-direction: column; gap: 3px; }
+  .figures dt {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.14em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  .figures dd { margin: 0; font-family: var(--mono); font-size: 17px; font-weight: 500; }
+
+  .verdict-note { font-size: 13px; color: var(--muted); max-width: 62ch; }
+  .verdict-note:empty { display: none; }
+
+  /* The map. One scale drawing of the card's memory: allocation from the
+     left, the amber budget line (capacity x utilization) as the limit that
+     actually decides the verdict, the capacity wall, and — when the
+     allocation runs past either — hatched red. Nothing is clamped to the
+     track: the scale grows instead, so 12 GiB over and 80 GiB over never
+     look alike. */
+  .map[hidden] { display: none; }
+  .map-track {
+    position: relative; height: 54px;
+    background: var(--inset);
+    border: 1px solid var(--rule); border-radius: 3px;
+    overflow: hidden;
+  }
+  .map-band { position: absolute; top: 0; bottom: 0; }
+  .map-reserve {
+    z-index: 1;
+    background: repeating-linear-gradient(45deg, var(--rule) 0 1px, transparent 1px 7px);
+  }
+  .map-over, .map-excess {
+    background: repeating-linear-gradient(45deg, var(--over-hatch) 0 2px, transparent 2px 7px);
+  }
+  .map-over { z-index: 1; }
+  .map-excess { z-index: 3; }
+
+  .map-segs { position: absolute; inset: 0; z-index: 2; }
+  .map-seg {
+    position: absolute; top: 0; bottom: 0;
+    display: flex; align-items: center;
+    padding-left: 7px; overflow: hidden;
+    border-right: 1px solid color-mix(in srgb, var(--ground) 45%, transparent);
+    transition: left 260ms cubic-bezier(0.2, 0.7, 0.3, 1), width 260ms cubic-bezier(0.2, 0.7, 0.3, 1);
+  }
+  .map-seg span {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--on-fill); white-space: nowrap;
+  }
+
+  .map-line { position: absolute; top: 0; bottom: 0; width: 2px; z-index: 4; }
+  .map-budget { background: var(--signal); }
+  [data-state="over"] .map-budget { background: var(--redline); }
+  .map-wall { background: var(--text); }
+  .map-line[hidden] { display: none; }
+
+  /* Marks are placed by percentage, so at narrow widths they can run into each
+     other. Rather than dropping one, app.ts assigns each a --row and the mark
+     steps down a line, lengthening its tick to stay joined to the track. */
+  .map-axis { position: relative; height: calc(var(--rows, 1) * 16px + 14px); margin-top: 7px; }
+  .axis-mark {
+    position: absolute; top: calc((var(--row, 1) - 1) * 16px);
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    white-space: nowrap; padding-top: 7px;
+  }
+  .axis-mark::before {
+    content: ''; position: absolute; left: 0; width: 1px;
+    top: calc((var(--row, 1) - 1) * -16px);
+    height: calc((var(--row, 1) - 1) * 16px + 5px);
+    background: var(--rule-2);
+  }
+  .axis-zero { left: 0; }
+  /* Marks sit on their tick; the one pinned to the right edge hangs left of it. */
+  .axis-mark[data-anchor="mid"] { transform: translateX(-50%); }
+  .axis-mark[data-anchor="mid"]::before { left: 50%; }
+  .axis-mark[data-anchor="end"] { transform: translateX(-100%); }
+  .axis-mark[data-anchor="end"]::before { left: auto; right: 0; }
+  .axis-budget { color: var(--signal); }
+  [data-state="over"] .axis-budget { color: var(--redline); }
+  .axis-mark[hidden] { display: none; }
+
+  /* --- Body columns --------------------------------------------------- */
+
+  main {
+    display: grid; grid-template-columns: 400px 1fr; gap: 20px;
+    padding: 20px 26px 40px; align-items: start;
+  }
+  .panel {
+    background: var(--panel); border: 1px solid var(--rule);
+    border-radius: 6px; padding: 16px;
+  }
+
+  .tabs { display: flex; gap: 6px; margin-bottom: 16px; }
+  /* Buttons, not divs: the scenario switch has to be reachable by keyboard,
+     and a native button gets focus and Enter/Space activation for free. */
+  .tab {
+    flex: 1; padding: 8px 10px; text-align: center; cursor: pointer; appearance: none;
+    background: var(--inset); border: 1px solid var(--rule); border-radius: 4px;
+    font-family: var(--display);
+    font-size: 11px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--muted);
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active {
+    background: var(--signal); border-color: var(--signal); color: var(--on-fill);
+  }
+
+  /* Borderless groups: the eyebrow does the separating, so the form reads as
+     one column of controls rather than a stack of boxes. */
+  fieldset { border: 0; margin: 0; padding: 0; }
+  fieldset + fieldset { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--rule); }
+  legend {
+    padding: 0; float: left; width: 100%;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--muted);
+  }
+  /* Vertical rhythm lives on the fieldset, never on individual labels — a
+     margin on the label itself lands asymmetrically across grid siblings. */
+  fieldset > * + * { margin-top: 11px; }
+  fieldset > legend + * { margin-top: 0; }
+  legend + * { clear: both; padding-top: 12px; }
+
+  /* A label is a column so its control hugs the bottom of the box: label text
+     that wraps to two lines then pushes the text up, not the control down. */
+  label {
+    display: flex; flex-direction: column; justify-content: flex-end;
+    font-size: 12px; color: var(--muted);
+  }
+
+  select, input[type=number], input[type=text], textarea {
+    width: 100%; padding: 7px 9px; margin-top: 4px;
+    background: var(--inset); color: var(--text);
+    border: 1px solid var(--rule); border-radius: 4px;
+    font-family: var(--mono); font-size: 13px;
+  }
+  select:hover, input:hover, textarea:hover { border-color: var(--rule-2); }
+  select {
+    appearance: none; padding-right: 26px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%238d99a5' stroke-width='1.5' stroke-linecap='round'/%3E%3C/svg%3E");
+    background-repeat: no-repeat; background-position: right 9px center;
+  }
+  textarea { resize: vertical; font-size: 12px; line-height: 1.5; }
+
+  .row, .row3 { display: grid; gap: 10px; align-items: end; }
+  .row { grid-template-columns: 1fr 1fr; }
+  .row3 { grid-template-columns: 1fr 1fr 1fr; }
+
+  .check { display: flex; align-items: center; gap: 7px; }
+  .check input { width: auto; margin-top: 0; accent-color: var(--signal); }
+  .check label { flex-direction: row; justify-content: flex-start; margin: 0; cursor: pointer; }
+
+  /* A unit glued to the right edge of its input, inside the same border. */
+  .suffixed {
+    display: flex; align-items: center; gap: 6px; margin-top: 4px; padding-right: 9px;
+    background: var(--inset); border: 1px solid var(--rule); border-radius: 4px;
+  }
+  .suffixed:focus-within { border-color: var(--signal); }
+  .suffixed input { margin-top: 0; border: none; background: none; }
+  .suffixed input:focus-visible { outline: none; }
+  .suffixed span { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+
+  #hf-fields > * + * { margin-top: 11px; }
+  .hf-actions { display: flex; align-items: center; gap: 9px; font-size: 12px; color: var(--muted); }
+  .hf-actions input[type=file] { width: auto; padding: 0; border: none; background: none; font-size: 12px; }
+  .hf-actions input[type=file]::file-selector-button {
+    padding: 6px 11px; margin-right: 9px; background: var(--inset); color: var(--text);
+    border: 1px solid var(--rule); border-radius: 4px;
+    font-family: var(--display); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.08em; text-transform: uppercase; cursor: pointer;
+  }
+  .hf-actions input[type=file]::file-selector-button:hover { border-color: var(--rule-2); }
+  #lora-fields > * + * { margin-top: 11px; }
+
+  .note { font-size: 12px; line-height: 1.5; color: var(--muted); }
+  .note:empty { display: none; }
+  .note b { color: var(--text); font-weight: 600; }
+  #hf-status.bad { color: var(--redline); }
+
+  /* --- Breakdown ------------------------------------------------------ */
+
+  .detail-head {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+    margin-bottom: 12px;
+  }
+  .detail-head h2 {
+    margin: 0; font-size: 10px; font-weight: 700; letter-spacing: 0.16em;
+    text-transform: uppercase; color: var(--muted);
+  }
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 6px 8px; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 500; }
-  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
-  tr.total td { font-weight: 600; border-top: 2px solid var(--border); border-bottom: none; }
-  .bar-track { display: flex; height: 26px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); margin: 12px 0; }
-  .bar-seg { height: 100%; }
-  .legend { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
-  .legend span.sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
-  .verdict { padding: 10px 12px; border-radius: 8px; font-size: 13px; margin-bottom: 12px; }
-  .verdict.ok { background: color-mix(in srgb, var(--ok) 18%, transparent); border: 1px solid var(--ok); }
-  .verdict.bad { background: color-mix(in srgb, var(--bad) 18%, transparent); border: 1px solid var(--bad); }
-  .warnings { font-size: 12px; color: var(--warn); }
-  .warnings div { margin-top: 4px; }
-  .summary { font-size: 13px; color: var(--muted); margin-bottom: 10px; }
-  .summary b { color: var(--text); }
+  th, td { text-align: left; padding: 8px 9px; border-bottom: 1px solid var(--rule); }
+  th {
+    color: var(--muted); font-size: 10px; font-weight: 700;
+    letter-spacing: 0.13em; text-transform: uppercase;
+  }
+  td.num, th.num { text-align: right; }
+  td.num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  /* The swatch column keys the map, so the table doubles as its legend. */
+  .sw {
+    display: inline-block; width: 9px; height: 9px; border-radius: 1px;
+    margin-right: 9px; vertical-align: 0;
+  }
+  td small { display: block; margin-top: 3px; padding-left: 18px; font-size: 11px; color: var(--muted); }
+  tr.total td { font-weight: 700; border-top: 2px solid var(--rule-2); border-bottom: none; }
+  tr.total td.num { font-weight: 600; }
+  /* No swatch on the total row, so indent it to the component names. */
+  tr.total td:first-child { padding-left: 27px; }
+
+  .warnings { margin-top: 14px; font-size: 12px; line-height: 1.5; }
+  .warnings div {
+    padding: 7px 10px 7px 11px; margin-top: 6px;
+    border-left: 2px solid var(--signal);
+    background: color-mix(in srgb, var(--signal) 9%, transparent);
+    color: var(--text);
+  }
+
+  @media (max-width: 900px) {
+    main { grid-template-columns: 1fr; padding: 16px; }
+    .readout { position: static; padding: 16px; }
+    .masthead { padding: 14px 16px; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    * { transition: none !important; animation: none !important; }
+  }
 </style>
 </head>
 <body>
-<header>
-  <h1>GPU Memory Calculator</h1>
-  <p>Inference / KV cache, fine-tuning (full · LoRA · QLoRA), and MoE — with TP / PP / DP / EP. Fine-tuning math follows LLMem (arXiv:2404.10933).</p>
+<header class="masthead">
+  <h1 class="wordmark">GPU Memory Calculator</h1>
+  <p class="masthead-note">Estimate VRAM per GPU before you launch the job.</p>
+  <span class="masthead-cite"><a href="https://arxiv.org/abs/2404.10933" target="_blank" rel="noopener noreferrer">LLMem &middot; arXiv:2404.10933</a></span>
 </header>
-<main>
-  <div>
-    <div class="panel">
-      <div class="tabs">
-        <div class="tab active" data-scenario="inference">Inference</div>
-        <div class="tab" data-scenario="finetune">Fine-tuning</div>
-      </div>
 
-      <fieldset>
-        <legend>Model</legend>
-        <label>Preset<select id="model-preset"></select></label>
-        <div id="moe-note" class="summary" style="display:none;"></div>
-      </fieldset>
-
-      <fieldset>
-        <legend>Parallelism</legend>
-        <div class="row3">
-          <label>TP<input type="number" id="tp" min="1" value="1" /></label>
-          <label>PP<input type="number" id="pp" min="1" value="1" /></label>
-          <label>DP<input type="number" id="dp" min="1" value="1" /></label>
-        </div>
-        <label id="ep-label" style="display:none;">EP (expert-parallel)<input type="number" id="ep" min="1" value="1" /></label>
-      </fieldset>
-
-      <fieldset id="inference-fields">
-        <legend>Inference</legend>
-        <div class="row">
-          <label>Weight dtype
-            <select id="weight-dtype"></select>
-          </label>
-          <label>KV cache dtype
-            <select id="kv-dtype"></select>
-          </label>
-        </div>
-        <div class="row">
-          <label>Sequence length<input type="number" id="inf-seq" min="1" value="4096" /></label>
-          <label>Batch size<input type="number" id="inf-batch" min="1" value="1" /></label>
-        </div>
-        <label>Logits mode
-          <select id="logits-mode">
-            <option value="lastToken">Last token (decode)</option>
-            <option value="fullSequence">Full sequence (prefill scoring)</option>
-          </select>
-        </label>
-      </fieldset>
-
-      <fieldset id="finetune-fields" style="display:none;">
-        <legend>Fine-tuning</legend>
-        <div class="row">
-          <label>Method
-            <select id="ft-method">
-              <option value="full">Full fine-tuning</option>
-              <option value="lora">LoRA</option>
-              <option value="qlora">QLoRA</option>
-            </select>
-          </label>
-          <label>Fidelity
-            <select id="ft-fidelity">
-              <option value="simple">Simple (fast, analytic)</option>
-              <option value="granular">Granular (LLMem-faithful)</option>
-            </select>
-          </label>
-        </div>
-        <div class="row">
-          <label>ZeRO stage
-            <select id="ft-zero">
-              <option value="0">0 (none)</option>
-              <option value="1">1 (optimizer)</option>
-              <option value="2">2 (+ gradients)</option>
-              <option value="3">3 (+ params, ADP)</option>
-            </select>
-          </label>
-          <label>Optimizer
-            <select id="ft-optimizer">
-              <option value="adamw">AdamW</option>
-              <option value="adamw8bit">AdamW 8-bit</option>
-              <option value="sgd">SGD (momentum)</option>
-            </select>
-          </label>
-        </div>
-        <div class="row">
-          <label>Sequence length<input type="number" id="ft-seq" min="1" value="2048" /></label>
-          <label>Batch size<input type="number" id="ft-batch" min="1" value="1" /></label>
-        </div>
-        <div class="check"><input type="checkbox" id="ft-ckpt" /><label for="ft-ckpt">Gradient checkpointing</label></div>
-        <div class="check"><input type="checkbox" id="ft-mp" checked /><label for="ft-mp">Mixed precision</label></div>
-        <div id="lora-fields" style="display:none;">
-          <label>LoRA rank<input type="number" id="lora-rank" min="1" value="16" /></label>
-          <label>Target modules (comma-separated)<input type="text" id="lora-targets" value="q_proj,k_proj,v_proj,o_proj" /></label>
-        </div>
-      </fieldset>
-
-      <fieldset>
-        <legend>GPU</legend>
-        <label>Device<select id="gpu-select"></select></label>
-        <label>Usable fraction (gpu_memory_utilization)<input type="number" id="gpu-util" min="0.1" max="1" step="0.05" value="1" /></label>
-      </fieldset>
+<section class="readout" id="readout">
+  <div class="spec" id="summary"></div>
+  <div class="verdict-row">
+    <h2 class="verdict-word" id="verdict-word"></h2>
+    <dl class="figures" id="verdict-figures"></dl>
+  </div>
+  <div class="verdict-note" id="verdict-note"></div>
+  <div class="map" id="map">
+    <div class="map-track" id="map-track">
+      <div class="map-band map-reserve" id="map-reserve"></div>
+      <div class="map-band map-over" id="map-over"></div>
+      <div class="map-segs" id="map-segs"></div>
+      <div class="map-band map-excess" id="map-excess"></div>
+      <div class="map-line map-budget" id="map-budget"></div>
+      <div class="map-line map-wall" id="map-wall"></div>
+    </div>
+    <div class="map-axis" id="map-axis">
+      <span class="axis-mark axis-zero" id="axis-zero">0</span>
+      <span class="axis-mark axis-budget" id="axis-budget"></span>
+      <span class="axis-mark" id="axis-capacity"></span>
     </div>
   </div>
+</section>
 
-  <div>
-    <div class="panel">
-      <div id="verdict" class="verdict"></div>
-      <div id="summary" class="summary"></div>
-      <div id="legend" class="legend"></div>
-      <div id="bar" class="bar-track"></div>
-      <table>
-        <thead>
-          <tr><th>Component</th><th class="num">Total</th><th class="num">Per-GPU (peak)</th></tr>
-        </thead>
-        <tbody id="table-body"></tbody>
-      </table>
-      <div id="warnings" class="warnings"></div>
+<main>
+  <div class="panel">
+    <div class="tabs">
+      <button type="button" class="tab active" data-scenario="inference">Inference</button>
+      <button type="button" class="tab" data-scenario="finetune">Fine-tuning</button>
     </div>
+
+    <fieldset>
+      <legend>Model</legend>
+      <label>Preset<select id="model-preset"></select></label>
+      <div id="hf-fields" style="display:none;">
+        <!-- Label text stays a bare text node: `label` is a flex column, so an
+             inline child here would become its own flex line. -->
+        <label>Paste a HuggingFace config.json
+          <textarea id="hf-config" rows="8" spellcheck="false" placeholder='{
+  "model_type": "llama",
+  "num_hidden_layers": 32,
+  "hidden_size": 4096,
+  ...
+}'></textarea>
+        </label>
+        <div class="hf-actions">
+          <input type="file" id="hf-file" accept="application/json,.json" />
+          <span>or upload the file</span>
+        </div>
+        <div id="hf-status" class="note"></div>
+      </div>
+      <div id="moe-note" class="note" style="display:none;"></div>
+    </fieldset>
+
+    <fieldset>
+      <legend>Parallelism</legend>
+      <div class="row3">
+        <label>TP<input type="number" id="tp" min="1" value="1" /></label>
+        <label>PP<input type="number" id="pp" min="1" value="1" /></label>
+        <label>DP<input type="number" id="dp" min="1" value="1" /></label>
+      </div>
+      <label id="ep-label" style="display:none;">EP (expert-parallel)<input type="number" id="ep" min="1" value="1" /></label>
+    </fieldset>
+
+    <fieldset id="inference-fields">
+      <legend>Inference</legend>
+      <div class="row">
+        <label>Weight dtype
+          <select id="weight-dtype"></select>
+        </label>
+        <label>KV cache dtype
+          <select id="kv-dtype"></select>
+        </label>
+      </div>
+      <div class="row">
+        <label>Sequence length<input type="number" id="inf-seq" min="1" value="4096" /></label>
+        <label>Batch size<input type="number" id="inf-batch" min="1" value="1" /></label>
+      </div>
+      <label>Logits mode
+        <select id="logits-mode">
+          <option value="lastToken">Last token (decode)</option>
+          <option value="fullSequence">Full sequence (prefill scoring)</option>
+        </select>
+      </label>
+    </fieldset>
+
+    <fieldset id="finetune-fields" style="display:none;">
+      <legend>Fine-tuning</legend>
+      <div class="row">
+        <label>Method
+          <select id="ft-method">
+            <option value="full">Full fine-tuning</option>
+            <option value="lora">LoRA</option>
+            <option value="qlora">QLoRA</option>
+          </select>
+        </label>
+        <label>Fidelity
+          <select id="ft-fidelity">
+            <option value="simple">Simple (fast, analytic)</option>
+            <option value="granular">Granular (LLMem-faithful)</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label>ZeRO stage
+          <select id="ft-zero">
+            <option value="0">0 (none)</option>
+            <option value="1">1 (optimizer)</option>
+            <option value="2">2 (+ gradients)</option>
+            <option value="3">3 (+ params, ADP)</option>
+          </select>
+        </label>
+        <label>Optimizer
+          <select id="ft-optimizer">
+            <option value="adamw">AdamW</option>
+            <option value="adamw8bit">AdamW 8-bit</option>
+            <option value="sgd">SGD (momentum)</option>
+          </select>
+        </label>
+      </div>
+      <div class="row">
+        <label>Sequence length<input type="number" id="ft-seq" min="1" value="2048" /></label>
+        <label>Batch size<input type="number" id="ft-batch" min="1" value="1" /></label>
+      </div>
+      <div class="check"><input type="checkbox" id="ft-ckpt" /><label for="ft-ckpt">Gradient checkpointing</label></div>
+      <div class="check"><input type="checkbox" id="ft-mp" checked /><label for="ft-mp">Mixed precision</label></div>
+      <div id="lora-fields" style="display:none;">
+        <label>LoRA rank<input type="number" id="lora-rank" min="1" value="16" /></label>
+        <label>Target modules (comma-separated)<input type="text" id="lora-targets" value="q_proj,k_proj,v_proj,o_proj" /></label>
+      </div>
+    </fieldset>
+
+    <fieldset>
+      <legend>GPU</legend>
+      <label>Device<select id="gpu-select"></select></label>
+      <label>Usable memory (gpu_memory_utilization)
+        <div class="suffixed"><input type="number" id="gpu-util" min="1" max="100" step="5" value="75" /><span>%</span></div>
+      </label>
+    </fieldset>
+  </div>
+
+  <div class="panel">
+    <div class="detail-head">
+      <h2>Breakdown</h2>
+    </div>
+    <table>
+      <thead>
+        <tr><th>Component</th><th class="num">Total</th><th class="num">Per-GPU (peak)</th></tr>
+      </thead>
+      <tbody id="table-body"></tbody>
+    </table>
+    <div id="warnings" class="warnings"></div>
   </div>
 </main>
 <script type="module" src="./dist/app.js"></script>

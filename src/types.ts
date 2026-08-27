@@ -110,8 +110,6 @@ export interface InferenceInput {
   baseOverheadBytes?: number;
   /** Multiplier on activation memory accounting for concurrent live intermediates. Default 8. */
   activationFactor?: number;
-  /** Fraction of GPU memory considered usable (vLLM `gpu_memory_utilization`-style haircut), 0-1. */
-  gpuMemoryUtilization?: number;
 }
 
 export type FinetuneMethod = 'full' | 'lora' | 'qlora';
