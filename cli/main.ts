@@ -1,7 +1,9 @@
 #!/usr/bin/env node
+import { readFileSync } from 'node:fs';
 import { estimateInference } from '../src/inference.js';
 import { estimateFinetune } from '../src/finetune.js';
 import { resolveModel, type ModelOverrides } from '../src/models/resolve.js';
+import { parseHfConfig } from '../src/models/hf.js';
 import { MODEL_CATALOG } from '../src/models/catalog.js';
 import { GPU_CATALOG, findGpu } from '../src/gpus/catalog.js';
 import { renderText, renderJson } from '../src/report.js';
@@ -50,6 +52,29 @@ function bool(flags: Flags, key: string): boolean {
   return flags[key] === true || flags[key] === 'true';
 }
 
+/**
+ * Matches the web UI's 75% default: leaves room for the CUDA context,
+ * activation workspace, and fragmentation this tool doesn't model.
+ */
+const DEFAULT_GPU_MEMORY_UTILIZATION = 0.75;
+
+/**
+ * `--util` is a fraction, not a percentage. Anything outside (0, 1] is rejected
+ * rather than clamped — a value above 1 is a typo (`--util 75` meaning 75%, or
+ * `--util 5` meaning `0.5`), and silently treating it as 100% would hide the
+ * mistake behind a fit verdict that looks perfectly plausible.
+ */
+function utilization(flags: Flags): number {
+  const raw = num(flags, 'util');
+  if (raw === undefined) return DEFAULT_GPU_MEMORY_UTILIZATION;
+  if (!Number.isFinite(raw) || raw <= 0 || raw > 1) {
+    throw new Error(
+      `--util must be a fraction in (0, 1] — e.g. 0.9 for 90% — but got "${str(flags, 'util')}".`,
+    );
+  }
+  return raw;
+}
+
 function dtype(flags: Flags, key: string, fallback: DType): DType {
   const v = str(flags, key);
   if (v === undefined) return fallback;
@@ -90,10 +115,45 @@ function modelOverridesFromFlags(flags: Flags): ModelOverrides {
   return overrides;
 }
 
-function loadModel(flags: Flags) {
+interface LoadedModel {
+  config: ReturnType<typeof resolveModel>['config'];
+  caveat?: string;
+  /** Assumptions the HuggingFace parser had to make, surfaced as warnings. */
+  warnings: string[];
+}
+
+/**
+ * Resolves the model from `--hf-config` (a HuggingFace config.json on disk) or
+ * `--model` (a catalog preset), with the per-field `--hidden-size`-style flags
+ * layered on top of either. The two sources are mutually exclusive: taking a
+ * preset *and* a config file would silently discard one of them.
+ */
+function loadModel(flags: Flags): LoadedModel {
   const preset = str(flags, 'model');
+  const hfPath = str(flags, 'hf-config');
   const overrides = modelOverridesFromFlags(flags);
-  return resolveModel({ preset, overrides });
+
+  if (hfPath === undefined) {
+    const { config, caveat } = resolveModel({ preset, overrides });
+    return { config, caveat, warnings: [] };
+  }
+
+  if (preset !== undefined) {
+    throw new Error('--hf-config and --model are mutually exclusive. Pass one or the other.');
+  }
+
+  let text: string;
+  try {
+    text = readFileSync(hfPath, 'utf8');
+  } catch (err) {
+    throw new Error(`Could not read --hf-config "${hfPath}": ${err instanceof Error ? err.message : String(err)}`);
+  }
+
+  const parsed = parseHfConfig(text);
+  // Re-run resolveModel so flag overrides merge and validation applies exactly
+  // as they do for a preset.
+  const { config } = resolveModel({ overrides: { ...parsed.config, ...overrides } });
+  return { config, warnings: parsed.warnings };
 }
 
 function loadGpu(flags: Flags) {
@@ -109,8 +169,9 @@ function printOut(text: string) {
 }
 
 function cmdInfer(flags: Flags) {
-  const { config, caveat } = loadModel(flags);
+  const { config, caveat, warnings } = loadModel(flags);
   const gpu = loadGpu(flags);
+  const util = utilization(flags);
   const breakdown = estimateInference({
     model: config,
     parallelism: parallelismFromFlags(flags),
@@ -119,16 +180,16 @@ function cmdInfer(flags: Flags) {
     weightDtype: dtype(flags, 'dtype', 'bf16'),
     kvDtype: dtype(flags, 'kv-dtype', dtype(flags, 'dtype', 'bf16')),
     logitsMode: (str(flags, 'logits-mode') as 'lastToken' | 'fullSequence') ?? 'lastToken',
-    gpuMemoryUtilization: num(flags, 'util'),
   });
+  breakdown.warnings.unshift(...warnings);
   if (caveat) breakdown.warnings.unshift(`Preset caveat: ${caveat}`);
-  const util = num(flags, 'util') ?? 1;
   printOut(bool(flags, 'json') ? renderJson(breakdown, gpu, util) : renderText(breakdown, gpu, util));
 }
 
 function cmdFinetune(flags: Flags) {
-  const { config, caveat } = loadModel(flags);
+  const { config, caveat, warnings } = loadModel(flags);
   const gpu = loadGpu(flags);
+  const util = utilization(flags);
   const method = (str(flags, 'method') ?? 'full') as FinetuneMethod;
   const fidelity = (str(flags, 'fidelity') ?? 'simple') as Fidelity;
   const rank = num(flags, 'lora-rank');
@@ -153,8 +214,8 @@ function cmdFinetune(flags: Flags) {
     chunkBytes: num(flags, 'chunk-bytes'),
     baseOverheadBytes: num(flags, 'base-overhead-bytes'),
   });
+  breakdown.warnings.unshift(...warnings);
   if (caveat) breakdown.warnings.unshift(`Preset caveat: ${caveat}`);
-  const util = num(flags, 'util') ?? 1;
   printOut(bool(flags, 'json') ? renderJson(breakdown, gpu, util) : renderText(breakdown, gpu, util));
 }
 
@@ -175,11 +236,11 @@ function printHelp() {
   printOut(`gpumem — GPU VRAM calculator for inference, fine-tuning and MoE models.
 
 Usage:
-  gpumem infer --model <id> [--tp N --pp N --dp N --ep N | --gpus N] [--gpu <id>]
+  gpumem infer (--model <id> | --hf-config <path>) [--tp N --pp N --dp N --ep N | --gpus N] [--gpu <id>]
                [--dtype <dtype>] [--kv-dtype <dtype>] [--seq N] [--batch N]
                [--logits-mode lastToken|fullSequence] [--util 0-1] [--json]
 
-  gpumem finetune --model <id> [--tp N --pp N --dp N | --gpus N] [--gpu <id>]
+  gpumem finetune (--model <id> | --hf-config <path>) [--tp N --pp N --dp N | --gpus N] [--gpu <id>]
                   [--method full|lora|qlora] [--zero 0|1|2|3] [--optimizer adamw|adamw8bit|sgd]
                   [--grad-checkpointing] [--no-mixed-precision]
                   [--lora-rank N] [--lora-targets q_proj,k_proj,...]
@@ -188,7 +249,17 @@ Usage:
   gpumem models    List built-in model presets
   gpumem gpus      List built-in GPU capacities
 
-Custom model overrides (combine with or without --model):
+Fit verdict:
+  --gpu <id>           Compare the peak against a GPU's capacity.
+  --util 0-1           Fraction of that capacity treated as usable, vLLM-style.
+                       Defaults to 0.75; values outside (0, 1] are rejected.
+
+Models outside the built-in catalog:
+  --hf-config <path>   Read a HuggingFace config.json and derive the shape from it.
+                       Fields it omits are filled with conventional defaults and
+                       reported as warnings. Mutually exclusive with --model.
+
+Custom model overrides (combine with --model, --hf-config, or neither):
   --num-layers --hidden-size --num-heads --num-kv-heads --head-dim --ffn-size
   --gated-mlp --vocab-size --max-pos --tie-embeddings
   --moe-experts --moe-topk --moe-expert-size
