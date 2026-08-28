@@ -4,7 +4,11 @@ A TypeScript library, CLI, and web UI for estimating GPU VRAM usage for LLM **in
 
 Fine-tuning memory math is based on **LLMem: Estimating GPU Memory Usage for Fine-Tuning Pre-Trained LLMs** (Kim et al., 2024; [arXiv:2404.10933](https://arxiv.org/abs/2404.10933)), included in this repo at [`paper-notes/llmem/2404.10933v1.pdf`](paper-notes/llmem/2404.10933v1.pdf). LLMem covers fine-tuning only; MoE and inference/KV-cache math are this tool's own analytic extensions, built on the same operator-list/parallelism architecture for consistency.
 
-![app-screenshot](assets/app-screenshot.png)
+<p align="center">
+  <img src="assets/app-screenshot.png" alt="app screenshot" />
+  <br />
+  <em><strong>Img.</strong> The web UI detailing not enough VRAM for model inference.</em>
+</p>
 
 ## Getting started
 
@@ -101,6 +105,8 @@ npm run test:watch # watch mode
 npm run typecheck  # tsc --noEmit
 ```
 
+Every pull request and every push to `master` runs `npm run typecheck`, `npm test`, `npm run build`, and `npm run build:web` on Node 20 and 22 via GitHub Actions (`.github/workflows/ci.yml`).
+
 The test suite (`tests/`) checks:
 
 - **Parameter counts** against published totals (Llama 3.1 8B ≈ 8.03B; Mixtral 8x7B ≈ 46.7B total / 12.9B active).
@@ -110,6 +116,7 @@ The test suite (`tests/`) checks:
 - **Solver round-trips:** `maxBatchSize`/`maxSeqLen` land at or just under GPU capacity, and one unit more doesn't fit.
 - **Validation:** bad world sizes, indivisible head/expert counts, and unknown presets throw actionable errors.
 - **HuggingFace config parsing:** a real Llama 3.1 8B `config.json` round-trips to a byte-identical estimate against the hand-entered preset; Mixtral/DeepSeek key variants, MLA detection, `text_config` nesting, and every leniency default are covered, along with the error messages for malformed and under-specified input.
+- **Web UI (`tests/web.test.ts`):** the real `web/app.ts` entrypoint is run against the real `web/index.html` markup in a happy-dom document — control population, the default verdict/breakdown render, recompute-on-input, the inference/fine-tuning tab swap, the paste-a-`config.json` error and success paths, usable-memory field clamping, and the memory map's "wall stays on-scale when the allocation overruns" invariant.
 
 ## Formulas
 
@@ -195,6 +202,7 @@ Weights and KV cache are computed per pipeline stage (a stage only holds its own
 
 ## TODO
 
+- [x] Add tests to GitHub CI
 - [ ] Add metrics/specs for other GPU types beyond the current built-in catalog.
 - [ ] Support accurate calculation for DeepSeek's Multi-head Latent Attention (currently the generic full-rank attention formula overestimates its attention parameter count — see Known limitations).
 - [ ] Add more modern presets for available LLMs, with a search bar in the web UI to find them.

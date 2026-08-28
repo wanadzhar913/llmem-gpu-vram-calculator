@@ -25,6 +25,8 @@ CLI (after `npm run build`): `node dist/cli/main.js infer|finetune|models|gpus -
 
 There is no lint script configured; `npm run typecheck` is the correctness gate along with the test suite.
 
+CI (`.github/workflows/ci.yml`) runs `typecheck`, `test`, `build`, and `build:web` on Node 20 and 22 for every pull request and every push to `master`. Keep this workflow in step with the `scripts` block in `package.json` when scripts are added or renamed.
+
 ## Architecture
 
 ### The operator tensor list is the single source of truth
@@ -86,3 +88,5 @@ The allocation palette lives in CSS as `--alloc-1`…`--alloc-7`; `app.ts` refer
 ### Testing conventions
 
 `tests/finetune.test.ts` hand-derives exact LLMem golden values from a tiny synthetic model with `cudaPageBytes: 1` (disables page rounding, which otherwise swallows any small figure into a single 2 MiB page) and a small `chunkBytes` override, so the underlying arithmetic — not just page-rounded output — can be verified. Follow this pattern for new granular-fidelity formula changes: verify the exact math with rounding disabled, then add one realistic-scale test confirming the final figure is page-aligned.
+
+`tests/web.test.ts` covers the web UI. It has no exported surface — `web/app.ts` wires the markup to the estimator on import and returns nothing — so the test reads the real `web/index.html` `<body>` into a `happy-dom` document (the environment is set with a `// @vitest-environment happy-dom` docblock; no `vitest.config` exists), strips the `<script>` tag, then dynamically imports `web/app.js` so its `init()` runs against that markup. Each test remounts via `vi.resetModules()` + a fresh import. Assert on user-visible DOM state (readout `data-state`, `#verdict-word`, `#table-body` rows, style toggles), not on internals. `getBoundingClientRect()` returns zeros under happy-dom, so anything depending on measured pixel widths (the axis-mark row packing) can't be meaningfully asserted there.
