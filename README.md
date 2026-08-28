@@ -193,6 +193,12 @@ Weights and KV cache are computed per pipeline stage (a stage only holds its own
 - Frozen LoRA/QLoRA base weights are modeled as replicated per data-parallel rank, not further sharded by ZeRO/FSDP (a common real configuration), but FSDP-sharded frozen backbones aren't modeled.
 - Activation memory (both fidelities) assumes flash-attention-style processing with no O(seq²) attention-score matrix resident.
 
+## TODO
+
+- [ ] Add metrics/specs for other GPU types beyond the current built-in catalog.
+- [ ] Support accurate calculation for DeepSeek's Multi-head Latent Attention (currently the generic full-rank attention formula overestimates its attention parameter count — see Known limitations).
+- [ ] Add more modern presets for available LLMs, with a search bar in the web UI to find them.
+
 ## Project layout
 
 ```
