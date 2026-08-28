@@ -1,4 +1,10 @@
 {
+  "permissions": {
+    "allow": [
+      "Bash(gh pr *)",
+      "Bash(git checkout *)"
+    ]
+  },
   "enabledPlugins": {
     "frontend-design@claude-plugins-official": true
   }
