@@ -27,6 +27,10 @@ There is no lint script configured; `npm run typecheck` is the correctness gate 
 
 CI (`.github/workflows/ci.yml`) runs `typecheck`, `test`, `build`, and `build:web` on Node 20 and 22 for every pull request and every push to `master`. Keep this workflow in step with the `scripts` block in `package.json` when scripts are added or renamed.
 
+## Where things are documented
+
+`README.md` is the user-facing overview (CLI/web/library usage, testing, known limitations). `docs/methodology.md` holds the exact VRAM formulas for every scenario — LLMem granular vs. simple fine-tuning fidelity, inference/KV-cache, and TP/PP/DP/EP parallelism — and is the doc to update when a formula or its interpretation changes. `paper-notes/llmem/` has the LLMem PDF and reading notes. Keep all of these in step with code changes rather than deferring doc updates.
+
 ## Architecture
 
 ### The operator tensor list is the single source of truth
