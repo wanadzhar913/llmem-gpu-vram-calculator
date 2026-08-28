@@ -4,7 +4,11 @@ A TypeScript library, CLI, and web UI for estimating GPU VRAM usage for LLM **in
 
 Fine-tuning memory math is based on **LLMem: Estimating GPU Memory Usage for Fine-Tuning Pre-Trained LLMs** (Kim et al., 2024; [arXiv:2404.10933](https://arxiv.org/abs/2404.10933)), included in this repo at [`paper-notes/llmem/2404.10933v1.pdf`](paper-notes/llmem/2404.10933v1.pdf). LLMem covers fine-tuning only; MoE and inference/KV-cache math are this tool's own analytic extensions, built on the same operator-list/parallelism architecture for consistency.
 
-![app-screenshot](assets/app-screenshot.png)
+<p align="center">
+  <img src="assets/app-screenshot.png" alt="app screenshot" />
+  <br />
+  <em><strong>Img.</strong> The web UI detailing not enough VRAM for model inference.</em>
+</p>
 
 ## Getting started
 
