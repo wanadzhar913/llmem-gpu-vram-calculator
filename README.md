@@ -10,6 +10,12 @@ Fine-tuning memory math is based on [LLMem: Estimating GPU Memory Usage for Fine
   <em><strong>Img.</strong> The web UI detailing not enough VRAM for model inference.</em>
 </p>
 
+## Methodology & formulas
+
+Every scenario is built on one shared **operator tensor list** (`src/models/params.ts`): a per-tensor breakdown of the model (embedding, each layer's `q/k/v/o_proj` and FFN, norms, MoE experts/router, `lm_head`), each tagged with how it shards under TP/EP. Weight bytes, optimizer state, KV cache, and LoRA adapter sizing all walk this same list rather than re-deriving shapes independently.
+
+The exact formulas for each scenario — LLMem granular vs. simple fine-tuning fidelity, inference/KV-cache, and TP/PP/DP/EP parallelism — are documented in [docs/methodology.md](docs/methodology.md).
+
 ## Getting started
 
 Requires Node.js ≥ 20.
@@ -118,12 +124,6 @@ The test suite (`tests/`) checks:
 - **HuggingFace config parsing:** a real Llama 3.1 8B `config.json` round-trips to a byte-identical estimate against the hand-entered preset; Mixtral/DeepSeek key variants, MLA detection, `text_config` nesting, and every leniency default are covered, along with the error messages for malformed and under-specified input.
 - **Web UI (`tests/web.test.ts`):** the real `web/app.ts` entrypoint is run against the real `web/index.html` markup in a happy-dom document — control population, the default verdict/breakdown render, recompute-on-input, the inference/fine-tuning tab swap, the paste-a-`config.json` error and success paths, usable-memory field clamping, and the memory map's "wall stays on-scale when the allocation overruns" invariant.
 
-## Methodology & formulas
-
-Every scenario is built on one shared **operator tensor list** (`src/models/params.ts`): a per-tensor breakdown of the model (embedding, each layer's `q/k/v/o_proj` and FFN, norms, MoE experts/router, `lm_head`), each tagged with how it shards under TP/EP. Weight bytes, optimizer state, KV cache, and LoRA adapter sizing all walk this same list rather than re-deriving shapes independently.
-
-The exact formulas for each scenario — LLMem granular vs. simple fine-tuning fidelity, inference/KV-cache, and TP/PP/DP/EP parallelism — are documented in [docs/methodology.md](docs/methodology.md).
-
 ## Known limitations
 
 - **DeepSeek-V3** uses Multi-head Latent Attention (low-rank factorized q/k/v projections); this tool's generic full-rank attention formula overestimates its attention parameter count. Its KV cache size *is* accurate (via `kvCacheDimPerLayerOverride`).
@@ -135,6 +135,8 @@ The exact formulas for each scenario — LLMem granular vs. simple fine-tuning f
 ## TODO
 
 - [x] Add tests to GitHub CI
+- [ ] Add calculation support for GGUF based models
+- [ ] Adjust calculations based on serving stack e.g., vLLM, llama.cpp, Ollama, etc.
 - [ ] Add metrics/specs for other GPU types beyond the current built-in catalog.
 - [ ] Support accurate calculation for DeepSeek's Multi-head Latent Attention (currently the generic full-rank attention formula overestimates its attention parameter count — see Known limitations).
 - [ ] Add more modern presets for available LLMs, with a search bar in the web UI to find them.
